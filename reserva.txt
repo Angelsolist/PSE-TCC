@@ -1,0 +1,251 @@
+import os
+import unicodedata
+
+import matplotlib.pyplot as plt
+import pandas as pd
+import streamlit as st
+
+
+def normalizar_texto(valor):
+    texto = str(valor).strip().lower()
+    texto = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode("ascii")
+    return " ".join(texto.split())
+
+
+def carregar_base():
+    if os.path.exists("dados_PSE.xlsx"):
+        try:
+            abas = pd.read_excel("dados_PSE.xlsx", sheet_name=None)
+            if "Gráficos" in abas:
+                return abas["Gráficos"], "dados_PSE.xlsx (aba Geral)"
+            primeira_aba = next(iter(abas))
+            return abas[primeira_aba], f"dados_PSE.xlsx (aba {primeira_aba})"
+        except Exception as exc:
+            st.warning(f"Falha ao ler 'dados_PSE.xlsx': {exc}. Tentando 'dados.csv'.")
+
+    if os.path.exists("dados.csv"):
+        try:
+            return pd.read_csv("dados.csv", encoding="utf-8"), "dados.csv"
+        except UnicodeDecodeError:
+            return pd.read_csv("dados.csv", encoding="latin-1"), "dados.csv"
+
+    raise FileNotFoundError("Arquivo de dados não encontrado (dados_PSE.xlsx ou dados.csv).")
+
+def carregar_abas_especificas():
+    if os.path.exists("dados_PSE.xlsx"):
+        try:
+            abas = pd.read_excel("dados_PSE.xlsx", sheet_name=None)
+            return abas
+        except Exception as exc:
+            st.warning(f"Falha ao ler 'dados_PSE.xlsx': {exc}.")
+    return None
+
+
+def carregar_acoes_por_aba():
+    if not os.path.exists("dados_PSE.xlsx"):
+        raise FileNotFoundError("Arquivo 'dados_PSE.xlsx' não encontrado.")
+
+    arquivo = pd.ExcelFile("dados_PSE.xlsx")
+    nomes_abas = arquivo.sheet_names[1:]
+    acoes = []
+
+    for nome_aba in nomes_abas:
+        aba = pd.read_excel(arquivo, sheet_name=nome_aba, header=None)
+        if aba.empty:
+            continue
+
+        primeira_linha = aba.iloc[0].dropna().tolist()
+        if not primeira_linha:
+            continue
+
+        valor = None
+
+        for celula in primeira_linha:
+            if valor is None:
+                valor_conversivel = pd.to_numeric(pd.Series([celula]), errors="coerce").iloc[0]
+                if pd.notna(valor_conversivel):
+                    valor = float(valor_conversivel)
+
+        if valor is not None:
+            acoes.append({"descricao": nome_aba, "valor": valor})
+
+    if not acoes:
+        raise ValueError("Não foi possível localizar ações nas abas do Excel.")
+
+    return pd.DataFrame(acoes)
+
+def detectar_colunas(df):
+    score_texto = {}
+    for col in df.columns:
+        serie = df[col].dropna().astype(str)
+        score_texto[col] = serie.str.contains(r"[A-Za-zÀ-ÿ]", regex=True).sum()
+    coluna_texto = max(score_texto, key=score_texto.get)
+
+    melhor_coluna_valor = None
+    melhor_score = -1
+    for col in df.columns:
+        if col == coluna_texto:
+            continue
+        numerico = pd.to_numeric(df[col], errors="coerce")
+        score = numerico.notna().sum()
+        if score > melhor_score:
+            melhor_score = score
+            melhor_coluna_valor = col
+
+    if melhor_coluna_valor is None or melhor_score <= 0:
+        raise ValueError("Não foi possível detectar a coluna de valores numéricos.")
+
+    return coluna_texto, melhor_coluna_valor
+
+
+def extrair_indicadores(df):
+    col_texto, col_valor = detectar_colunas(df)
+    base = pd.DataFrame(
+        {
+            "descricao": df[col_texto].astype(str),
+            "valor": pd.to_numeric(df[col_valor], errors="coerce"),
+        }
+    ).dropna(subset=["valor"])
+
+    base["descricao_norm"] = base["descricao"].map(normalizar_texto)
+
+    def buscar(termos):
+        for _, row in base.iterrows():
+            if all(termo in row["descricao_norm"] for termo in termos):
+                return float(row["valor"])
+        return None
+
+    pactuadas = buscar(["escolas", "pactuadas"])
+    atingidas = buscar(["atingidas", "pse"])
+    prioritarias = buscar(["priorit", "ms"])
+    if prioritarias is None:
+        prioritarias = buscar(["priorit"])
+
+    if pactuadas is None or atingidas is None or prioritarias is None:
+        exemplos = base["descricao"].dropna().head(10).tolist()
+        raise ValueError(
+            "Não foi possível localizar os 3 indicadores esperados. "
+            f"Exemplos de rótulos encontrados: {exemplos}"
+        )
+
+    return {
+        "pactuadas": pactuadas,
+        "atingidas": atingidas,
+        "prioritarias": prioritarias,
+    }
+
+def plot_barras(indicadores):
+    categorias = [
+        "Escolas pactuadas",
+        "Escolas atingidas pelas ações do PSE",
+        "Escolas com ações prioritárias do MS",
+    ]
+    valores = [
+        indicadores["pactuadas"],
+        indicadores["atingidas"],
+        indicadores["prioritarias"],
+    ]
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    barras = ax.bar(categorias, valores, color=["#2E86AB", "#1FAA59", "#FF9F1C"])
+    ax.set_title("Escolas pactuadas vs atingidas e prioritárias", fontsize=20, pad=12, loc='center')
+    ax.set_ylabel("Quantidade de escolas")
+    ax.tick_params(axis="x", rotation=15)
+
+    st.pyplot(fig)
+
+
+def plot_pizza(acoes):
+    labels = acoes["descricao"].tolist()
+    valores = acoes["valor"].tolist()
+    total = sum(valores)
+
+    if total <= 0:
+        raise ValueError("Os valores das ações precisam ser maiores que zero para montar o gráfico de pizza.")
+
+    cores = plt.cm.get_cmap("tab20").colors[:len(valores)]
+
+    fig, ax = plt.subplots(figsize=(10, 8))
+    wedges, texts, autotexts = ax.pie(
+        valores,
+        autopct=lambda v: f"{sum(valores) * v / 100:.0f}" if v > 0 else "",
+        startangle=90,
+        colors=cores,
+    )
+    ax.set_title("Distribuição das ações do PSE", fontsize=24, pad=16, loc='center')
+    ax.axis("equal")
+    ax.legend(wedges, labels, title="Ações", loc="center left", bbox_to_anchor=(1, 0.5))
+    st.pyplot(fig)
+
+def carrega_dados():
+    try:
+        df, origem = carregar_base()
+        indicadores = extrair_indicadores(df)
+        acoes = carregar_acoes_por_aba()
+        return df, origem, indicadores, acoes
+    except Exception as exc:
+        st.error(f"Erro ao carregar os dados: {exc}")
+        return None, None, None, None
+
+#A COMPLEMENTAR: função para apresentar o conteúdo de uma aba específica quando o usuário clicar no botão correspondente    
+def apresenta_aba(df, nome_aba):
+    st.subheader(f"Aba: {nome_aba}")
+    st.dataframe(df)
+
+def main():
+    st.set_page_config(page_title="Programa Saúde na Escola", layout="wide")
+    st.title("Programa Saúde na Escola")
+
+    df, origem, indicadores, acoes = carrega_dados()
+
+    st.write(f"Fonte dos dados: {origem}")
+    abas = carregar_abas_especificas()
+    # Oferece uma lista das abas para o usuário escolher qual quer visualizar,
+    # caso o arquivo seja encontrado e tenha pelo menos uma aba
+    st.write("Essas são as ações principais extraídas da base de dados, selecione qual deseja visualizar:")
+    for nome_aba, df_aba in abas.items():
+        if st.button(nome_aba):
+            apresenta_aba(df_aba, nome_aba)
+        #Se pressionar novamente deve nao exibir mais a aba
+        
+
+        
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Pactuadas", int(indicadores["pactuadas"]))
+    col2.metric(
+        "Atingidas PSE",
+        int(indicadores["atingidas"]),
+        f"{(indicadores['atingidas'] / indicadores['pactuadas']) * 100:.2f}%",
+        "off"
+    )
+    col3.metric(
+        "Prioritárias MS",
+        int(indicadores["prioritarias"]),
+        f"{(indicadores['prioritarias'] / indicadores['pactuadas']) * 100:.2f}%",
+        "off"
+    )
+
+    st.subheader("Gráfico de barras")
+    plot_barras(indicadores)
+
+    st.subheader("Gráfico de pizza")
+    plot_pizza(acoes)
+
+if __name__ == "__main__":
+    main()
+
+
+
+    VERSAO ANTES DE INICIALIZAR DASHBOARD MESMO:
+
+    st.subheader("Gráfico de barras")
+    plot_barras(indicadores)
+
+
+    st.markdown("---")
+    st.write("Gráficos de pizza")
+
+    plot_pizza(pizza_atividades_df, "Volume de Atividades por Ação")
+    
+    plot_pizza(pizza_escolas_df, "Escolas Alcançadas por Ação")
