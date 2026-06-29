@@ -310,7 +310,9 @@ def cria_novos_indicadores(df_dados, pactuadas, acoes_prioritarias, acoes_necess
     st.write(f"**Quantidade de escolas com ações registradas em pelo menos {acoes_necessarias} das 5 ações prioritárias:** {indicador_novo}")
     st.write(f"**Porcentagem de cobertura de {acoes_necessarias} ações: {indicador_novo/pactuadas * 100:.2f}%**")
     
-    # Acumulador nativo: leve e rápido
+    # 1. Carrega o dicionário para cruzar os INEPs nesta visão (já que o df_dados global não os possui)
+    df_dicionario = carregar_dicionario_escolas()
+    
     dados_faltantes = []
 
     for escola in escolas_com_prioritarias:
@@ -318,14 +320,33 @@ def cria_novos_indicadores(df_dados, pactuadas, acoes_prioritarias, acoes_necess
         acoes_faltantes = [Ação for Ação in acoes_prioritarias if Ação not in acoes_escola]
         
         if acoes_faltantes:
-            # Adiciona um dicionário à lista
             dados_faltantes.append({
-                "Nome da Escola": escola,
+                "Nome_Original": escola,
+                "Nome_SQL_Clean": str(escola).strip().upper(), # Higienização para a chave de join
                 "Ações Faltantes": ", ".join(acoes_faltantes)
             })
     
-    # Cria o DataFrame de uma só vez no fim do processamento
-    df_acoes_faltantes = pd.DataFrame(dados_faltantes, columns=["Nome da Escola", "Ações Faltantes"])
+    df_acoes_faltantes = pd.DataFrame(dados_faltantes)
+
+    # 2. Executa o cruzamento se houver dados
+    if not df_acoes_faltantes.empty:
+        df_acoes_faltantes = pd.merge(
+            df_acoes_faltantes, 
+            df_dicionario, 
+            how='left', 
+            left_on='Nome_SQL_Clean', 
+            right_on='Nome_CSV_Clean'
+        )
+        
+        # 3. Trata nulos e cria a coluna consolidada final
+        df_acoes_faltantes['Código INEP'] = df_acoes_faltantes['Código INEP'].fillna('SEM CÓDIGO INEP').astype(str)
+        df_acoes_faltantes['Escola'] = df_acoes_faltantes['Código INEP'] + " - " + df_acoes_faltantes['Nome_Original']
+        
+        # Filtra apenas o essencial para a tela
+        df_acoes_faltantes = df_acoes_faltantes[["Escola", "Ações Faltantes"]]
+    else:
+        # Retorno de segurança para evitar erro de componente vazio no Streamlit
+        df_acoes_faltantes = pd.DataFrame(columns=["Escola", "Ações Faltantes"])
     
     return df_acoes_faltantes
 
