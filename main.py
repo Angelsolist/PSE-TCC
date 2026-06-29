@@ -872,8 +872,6 @@ def renderizar_dashboard_multiplas_acoes(df_dados, acoes_disponiveis, num_acoes)
         st.info("A seleção atual não possui dados mensais estruturados para filtragem de período.")
         df_final = df_f3 
     else:
-        st.markdown("**Período de Análise**")
-        col_mes1, col_mes2 = st.columns(2)
         
         st.markdown("**Período de Análise**")
         col_mes1, col_mes2 = st.columns(2)
