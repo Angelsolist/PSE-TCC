@@ -729,6 +729,8 @@ def exibir_tabela_filtrada(df):
     df['Mês_nome'] = df['Mês'].map(mes_nomes).fillna("Não Informado")
 
     df = df[["Coordenadoria de Região", "Unidade de Saúde", "Código INEP - Nome da Escola", "Mês_nome", "Valor"]].rename(columns={"Mês_nome": "Mês", "Valor": "Total Registrado"})
+    #penas valores positivos
+    df = df[df["Total Registrado"] > 0]
     col1, col2, col3 = st.columns(3)
     
     with col2:
@@ -819,6 +821,10 @@ def renderizar_dashboard_multiplas_acoes(df_dados, acoes_disponiveis, num_acoes)
     df_f3['Mes_Num'] = pd.to_numeric(df_f3['Mês'], errors='coerce')
     meses_disponiveis = sorted(df_f3['Mes_Num'].dropna().unique().astype(int).tolist())
 
+    nomes_meses = {1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho',
+                       7: 'Julho', 8: 'Agosto', 9: 'Setembro', 10: 'Outubro', 11: 'Novembro', 12: 'Dezembro'}
+
+    
     if not meses_disponiveis:
         st.info("A seleção atual não possui dados mensais estruturados para filtragem de período.")
         df_final = df_f3 
@@ -826,8 +832,8 @@ def renderizar_dashboard_multiplas_acoes(df_dados, acoes_disponiveis, num_acoes)
         st.markdown("**Período de Análise**")
         col_mes1, col_mes2 = st.columns(2)
         
-        nomes_meses = {1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho',
-                       7: 'Julho', 8: 'Agosto', 9: 'Setembro', 10: 'Outubro', 11: 'Novembro', 12: 'Dezembro'}
+        st.markdown("**Período de Análise**")
+        col_mes1, col_mes2 = st.columns(2)
         
         with col_mes1:
             mes_inicio = st.selectbox("Mês Inicial:", options=meses_disponiveis, format_func=lambda x: nomes_meses.get(x, str(x)))
@@ -856,6 +862,23 @@ def renderizar_dashboard_multiplas_acoes(df_dados, acoes_disponiveis, num_acoes)
         # Consolidação da pizza que mostra a distribuição macro entre as ações selecionadas
         df_totais_pizza = df_final.groupby("Ação")["Valor"].sum().reset_index()
         fig_pizza = px.pie(df_totais_pizza, names="Ação", values="Valor", title="Proporção entre as Ações (Total)")
+        
+        # Correção de layout: Legenda embaixo e respiro de altura
+        fig_pizza.update_layout(
+            height=500, # Garante espaço vertical para renderizar o círculo e a legenda
+            margin=dict(l=0, r=0, t=40, b=0),
+            legend=dict(
+                orientation="h",
+                yanchor="top",
+                y=-0.1,
+                xanchor="center",
+                x=0.5
+            )
+        )
+        # Otimiza o texto dentro da pizza para evitar sujeira visual
+        fig_pizza.update_traces(textposition='inside', textinfo='percent')
+
+        # use_container_width é a sintaxe mais moderna recomendada no lugar de width='stretch'
         st.plotly_chart(fig_pizza, width='stretch')
 
     with col_tabela:
