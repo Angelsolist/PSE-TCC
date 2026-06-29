@@ -419,29 +419,51 @@ def apresenta_escolas_sem_acoes(df_dados):
     meses = {1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril", 5: "Maio", 6: "Junho",
              7: "Julho", 8: "Agosto", 9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"}
 
-    #cria novo campo no dataframe que renomeia mes em numero para mes em nome
+    # Cria novo campo mapeando o mês
+    df_busca = df_dados.copy()
+    df_busca['Mês_Nome'] = df_busca['Mês'].map(meses)
 
-    df_dados['Mês_Nome'] = df_dados['Mês'].map(meses)
+    # 1. Carrega o dicionário e cruza os dados para obter o INEP na busca
+    df_dicionario = carregar_dicionario_escolas()
+    df_busca['Nome_SQL_Clean'] = df_busca['Nome da Escola'].astype(str).str.strip().str.upper()
+    
+    df_busca = pd.merge(
+        df_busca, 
+        df_dicionario, 
+        how='left', 
+        left_on='Nome_SQL_Clean', 
+        right_on='Nome_CSV_Clean'
+    )
+    
+    # 2. Consolida a string de exibição
+    df_busca['Código INEP'] = df_busca['Código INEP'].fillna('SEM CÓDIGO INEP').astype(str)
+    df_busca['Escola_Exibicao'] = df_busca['Código INEP'] + " - " + df_busca['Nome da Escola']
 
-    # novo bloco BUSCA POR ESCOLA. MOSTRA QUAIS AÇÕES FORAM REALIZADAS NA ESCOLA E O MÊS E A REGIAO E A US
-    df_escolas = df_dados["Nome da Escola"].unique()
+    # 3. Renderiza a interface de busca
     st.markdown("### Busca por Escola", text_alignment="center")
-    escola_selecionada = st.selectbox("Selecione a escola para ver detalhes:", options=df_escolas)
+    
+    lista_escolas = sorted(df_busca["Escola_Exibicao"].unique().tolist())
+    escola_selecionada = st.selectbox("Selecione a escola para ver detalhes:", options=lista_escolas)
+    
     if escola_selecionada:
-        detalhes_escola = df_dados[df_dados["Nome da Escola"] == escola_selecionada][["Coordenadoria de Região", "Unidade de Saúde", "Mês_Nome", "Ação", "Valor"]]
+        # Filtra usando a nova coluna consolidada
+        detalhes_escola = df_busca[df_busca["Escola_Exibicao"] == escola_selecionada][["Coordenadoria de Região", "Unidade de Saúde", "Mês_Nome", "Ação", "Valor"]]
+        
         st.markdown(f"**Detalhes para a escola: {escola_selecionada}**")
+        
         if detalhes_escola.empty:
             st.warning("Nenhum dado encontrado para esta escola.")
         else:
             detalhes_escola = detalhes_escola[detalhes_escola["Valor"] > 0]
             st.dataframe(detalhes_escola, width='stretch', hide_index=True)
-    #mostra quais acoes prioritarias foram feitas, caso tenham sido
-        acoes_feitas = detalhes_escola[detalhes_escola["Valor"] > 0]["Ação"].unique()
-        acoes_prioritarias_feitas = [Ação for Ação in acoes_prioritarias if Ação in acoes_feitas]
-        if acoes_prioritarias_feitas:
-            st.markdown(f"**Ações prioritárias realizadas na escola: {', '.join(acoes_prioritarias_feitas)}**")
-        else:
-            st.markdown("**Nenhuma ação prioritária registrada para esta escola.**")
+            
+            acoes_feitas = detalhes_escola["Ação"].unique()
+            acoes_prioritarias_feitas = [Ação for Ação in acoes_prioritarias if Ação in acoes_feitas]
+            
+            if acoes_prioritarias_feitas:
+                st.markdown(f"**Ações prioritárias realizadas na escola: {', '.join(acoes_prioritarias_feitas)}**")
+            else:
+                st.markdown("**Nenhuma ação prioritária registrada para esta escola.**")
 
     st.markdown("---")
 
